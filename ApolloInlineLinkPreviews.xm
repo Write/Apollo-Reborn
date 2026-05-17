@@ -327,6 +327,8 @@ typedef NS_ENUM(NSUInteger, ApolloLPArea) {
 
 static BOOL ApolloLPIsYouTubeURL(NSURL *url);
 
+static NSString * const ApolloLinkPreviewDidCacheNotification = @"ApolloLinkPreviewDidCacheNotification";
+
 static NSInteger ApolloLPModeForArea(ApolloLPArea area) {
     return (area == ApolloLPAreaComments) ? sLinkPreviewCommentsMode : sLinkPreviewBodyMode;
 }
@@ -377,6 +379,16 @@ static BOOL ApolloLPIsYouTubeURL(NSURL *url) {
         }
     }
     return NO;
+}
+
+static NSString *ApolloLPPlaceholderLines(NSUInteger lineCount, BOOL title) {
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithCapacity:lineCount];
+    NSString *longLine = title ? @"MMMMMMMMMMMMMMMMMMMM" : @"MMMMMMMMMMMMMMMMMMMMMMMM";
+    NSString *shortLine = title ? @"MMMMMMMMMMMM" : @"MMMMMMMMMMMMMMMM";
+    for (NSUInteger index = 0; index < lineCount; index++) {
+        [lines addObject:index + 1 == lineCount ? shortLine : longLine];
+    }
+    return [lines componentsJoinedByString:@"\n"];
 }
 
 static NSDictionary *ApolloLPPreparedNodeBundle(ASDisplayNode *hostNode, NSURL *url, ApolloLinkPreview *preview, NSString *variant) {
@@ -568,8 +580,13 @@ static id ApolloLPBuildPlaceholderSpec(ASDisplayNode *hostNode, NSURL *url, Apol
     imageNode.backgroundColor = placeholder;
     imageNode.cornerRadius = context == ApolloLPContextSelfText ? 10.0 : 8.0;
     siteNode.attributedText = ApolloLPAttributedString([preview.siteName uppercaseString], [UIFont systemFontOfSize:11.0 weight:UIFontWeightSemibold], [UIColor secondaryLabelColor]);
-    titleNode.attributedText = ApolloLPAttributedString(@"     ", [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold], placeholder);
-    descriptionNode.attributedText = ApolloLPAttributedString(@"          ", [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular], placeholder);
+    BOOL isYouTube = ApolloLPIsYouTubeURL(url);
+    NSUInteger titleLines = context == ApolloLPContextSelfText ? 3 : 1;
+    NSUInteger descriptionLines = isYouTube ? 2 : 4;
+    titleNode.maximumNumberOfLines = titleLines;
+    descriptionNode.maximumNumberOfLines = context == ApolloLPContextSelfText ? descriptionLines : 1;
+    titleNode.attributedText = ApolloLPAttributedString(ApolloLPPlaceholderLines(titleLines, YES), context == ApolloLPContextSelfText ? [UIFont systemFontOfSize:17.0 weight:UIFontWeightSemibold] : [UIFont systemFontOfSize:15.0 weight:UIFontWeightSemibold], placeholder);
+    descriptionNode.attributedText = ApolloLPAttributedString(ApolloLPPlaceholderLines(descriptionLines, NO), [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular], placeholder);
 
     if (context == ApolloLPContextSelfText && ratioClass) {
         NSMutableArray *children = [NSMutableArray array];
@@ -617,9 +634,33 @@ static id ApolloLPBuildPlaceholderSpec(ASDisplayNode *hostNode, NSURL *url, Apol
     return ApolloLPMeasuredWrapper(card, insetClass);
 }
 
-static void ApolloLPTriggerRelayout(ASDisplayNode *node) {
+static void ApolloLPInvokeTransitionLayoutIfPossible(id node) {
+    if (!node) return;
+    SEL transitionSel = NSSelectorFromString(@"transitionLayoutWithAnimation:shouldMeasureAsync:measurementCompletion:");
+    if (![node respondsToSelector:transitionSel]) return;
+
+    NSMethodSignature *signature = [node methodSignatureForSelector:transitionSel];
+    if (!signature) return;
+
+    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+    invocation.target = node;
+    invocation.selector = transitionSel;
+    BOOL animated = NO;
+    BOOL async = NO;
+    void (^completion)(void) = nil;
+    [invocation setArgument:&animated atIndex:2];
+    [invocation setArgument:&async atIndex:3];
+    [invocation setArgument:&completion atIndex:4];
+    @try {
+        [invocation invoke];
+    } @catch (__unused NSException *exception) {
+    }
+}
+
+static void ApolloLPTriggerRelayoutInternal(ASDisplayNode *node, BOOL scheduleDelayed) {
+    ASDisplayNode *cellNode = nil;
     NSUInteger depth = 0;
-    for (ASDisplayNode *current = node; current && depth < 5; current = current.supernode, depth++) {
+    for (ASDisplayNode *current = node; current && depth < 32; current = current.supernode, depth++) {
         SEL invalidate = @selector(invalidateCalculatedLayout);
         if ([current respondsToSelector:invalidate]) {
             ((void (*)(id, SEL))objc_msgSend)(current, invalidate);
@@ -634,7 +675,27 @@ static void ApolloLPTriggerRelayout(ASDisplayNode *node) {
         if ([current respondsToSelector:setNeedsLayout]) {
             ((void (*)(id, SEL))objc_msgSend)(current, setNeedsLayout);
         }
+
+        if (!cellNode && [NSStringFromClass([current class]) containsString:@"CellNode"]) {
+            cellNode = current;
+        }
     }
+
+    if (cellNode) {
+        ApolloLPInvokeTransitionLayoutIfPossible(cellNode);
+    }
+
+    if (scheduleDelayed) {
+        __weak ASDisplayNode *weakNode = node;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(80 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+            ASDisplayNode *strongNode = weakNode;
+            if (strongNode) ApolloLPTriggerRelayoutInternal(strongNode, NO);
+        });
+    }
+}
+
+static void ApolloLPTriggerRelayout(ASDisplayNode *node) {
+    ApolloLPTriggerRelayoutInternal(node, YES);
 }
 
 // Round 4 diagnostic flag: throttles the per-call logging so a feed scroll
@@ -729,6 +790,11 @@ static NSString *ApolloLPVariant(ApolloLPArea area, NSInteger mode, ApolloLPCont
             __weak ASDisplayNode *weakSelf = (ASDisplayNode *)self;
             [ApolloLinkPreviewFetcher requestPreviewForURL:url completion:^(__unused ApolloLinkPreview *preview) {
                 dispatch_async(dispatch_get_main_queue(), ^{
+                    if (preview) {
+                        [[NSNotificationCenter defaultCenter] postNotificationName:ApolloLinkPreviewDidCacheNotification
+                                                                            object:nil
+                                                                          userInfo:@{@"url": url}];
+                    }
                     ASDisplayNode *strongSelf = weakSelf;
                     if (!strongSelf) return;
                     objc_setAssociatedObject(strongSelf, &kApolloLinkPreviewFetchInFlightKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -786,4 +852,5 @@ static NSString *ApolloLPVariant(ApolloLPArea area, NSInteger mode, ApolloLPCont
     ApolloLog(@"[LinkPreviews] V8 borderless cards active");
     ApolloLog(@"[LinkPreviews] V9 split body/comment modes active");
     ApolloLog(@"[LinkPreviews] V10 preview text restore active");
+    ApolloLog(@"[LinkPreviews] V11 hero-card stability and naked-URL hiding active");
 }

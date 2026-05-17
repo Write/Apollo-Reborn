@@ -134,6 +134,15 @@ static const NSTimeInterval ApolloLinkPreviewYouTubeTTL = 30.0 * 24.0 * 60.0 * 6
     return preview;
 }
 
+- (BOOL)cachedPreviewIsRichForURL:(NSURL *)url {
+    ApolloLinkPreview *preview = [self cachedPreviewForURL:url];
+    if (![preview hasUsefulMetadata]) return NO;
+
+    BOOL hasRealImage = preview.imageURL.absoluteString.length > 0 && !preview.imageIsFallbackIcon;
+    BOOL hasTextMetadata = preview.title.length > 0 || preview.desc.length > 0;
+    return hasRealImage && hasTextMetadata;
+}
+
 - (void)storePreview:(ApolloLinkPreview *)preview forURL:(NSURL *)url {
     if (![url isKindOfClass:[NSURL class]] || !preview) return;
     if (!preview.fetchedAt) preview.fetchedAt = [NSDate date];
