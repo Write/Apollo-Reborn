@@ -55,5 +55,8 @@ static NSString *const UDKeyTagFilterSubredditOverrides = @"TagFilterSubredditOv
 
 // Legacy boolean key from the first rich link preview builds. Kept only for migration.
 static NSString *const UDKeyEnableLinkPreviews = @"EnableLinkPreviews";
-// Rich link preview cards: 0 = Off, 1 = Compact, 2 = Full.
+// Legacy single rich link preview mode key. Kept only for migration.
 static NSString *const UDKeyLinkPreviewMode = @"LinkPreviewMode";
+// Rich link preview cards: 0 = Off, 1 = Compact, 2 = Full.
+static NSString *const UDKeyLinkPreviewBodyMode = @"LinkPreviewBodyMode";
+static NSString *const UDKeyLinkPreviewCommentsMode = @"LinkPreviewCommentsMode";

@@ -33,8 +33,9 @@ typedef NS_ENUM(NSInteger, ApolloLinkPreviewMode) {
     ApolloLinkPreviewModeFull = 2,
 };
 
-// Rich link previews (Open Graph / oEmbed) for link cards in posts and comments.
-extern NSInteger sLinkPreviewMode;
+// Rich link previews (Open Graph / oEmbed) for link cards in body/feed and comments.
+extern NSInteger sLinkPreviewBodyMode;
+extern NSInteger sLinkPreviewCommentsMode;
 
 // Media upload host selection. Imgur is the default; Reddit uses Apollo's signed-in
 // session to upload directly to Reddit's media storage.

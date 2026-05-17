@@ -50,7 +50,7 @@ static NSDictionary *ApolloTweetBuddyTransformResult(NSDictionary *result) {
 @implementation ApolloTweetProtocol
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    if (sLinkPreviewMode == ApolloLinkPreviewModeOff) return NO;
+    if (sLinkPreviewBodyMode == ApolloLinkPreviewModeOff && sLinkPreviewCommentsMode == ApolloLinkPreviewModeOff) return NO;
     if (![request.URL.absoluteString hasPrefix:kApolloTweetBaseURL]) return NO;
     if ([NSURLProtocol propertyForKey:kHandledKey inRequest:request]) return NO;
     return YES;
@@ -194,7 +194,7 @@ static NSDictionary *ApolloTweetBuddyTransformResult(NSDictionary *result) {
 
 + (instancetype)defaultSessionConfiguration {
     NSURLSessionConfiguration *configuration = %orig;
-    if (sLinkPreviewMode == ApolloLinkPreviewModeOff) return configuration;
+    if (sLinkPreviewBodyMode == ApolloLinkPreviewModeOff && sLinkPreviewCommentsMode == ApolloLinkPreviewModeOff) return configuration;
 
     NSMutableArray *protocols = [NSMutableArray arrayWithArray:configuration.protocolClasses ?: @[]];
     if (![protocols containsObject:[ApolloTweetProtocol class]]) {

@@ -887,7 +887,8 @@ static void initializeRandomSources() {
                                     UDKeyUnmuteCommentsVideos: @0,
                                     UDKeyProxyImgurDDG: @NO,
                                     UDKeyEnableInlineImages: @YES,
-                                    UDKeyLinkPreviewMode: @(ApolloLinkPreviewModeFull),
+                                    UDKeyLinkPreviewBodyMode: @(ApolloLinkPreviewModeFull),
+                                    UDKeyLinkPreviewCommentsMode: @(ApolloLinkPreviewModeFull),
                                     UDKeyImageUploadProvider: @(ImageUploadProviderImgur),
                                     UDKeyShowUserAvatars: @NO,
                                     UDKeyUseProfileAvatarTabIcon: @NO,
@@ -910,12 +911,23 @@ static void initializeRandomSources() {
 
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
     NSDictionary *persistentDomain = bundleID.length > 0 ? [standardDefaults persistentDomainForName:bundleID] : nil;
-    if (![persistentDomain objectForKey:UDKeyLinkPreviewMode]) {
+    if (![persistentDomain objectForKey:UDKeyLinkPreviewBodyMode] || ![persistentDomain objectForKey:UDKeyLinkPreviewCommentsMode]) {
         id legacyToggle = [persistentDomain objectForKey:UDKeyEnableLinkPreviews];
-        NSInteger migratedMode = (![legacyToggle respondsToSelector:@selector(boolValue)] || [legacyToggle boolValue])
-            ? ApolloLinkPreviewModeFull
-            : ApolloLinkPreviewModeOff;
-        [standardDefaults setInteger:migratedMode forKey:UDKeyLinkPreviewMode];
+        id legacyMode = [persistentDomain objectForKey:UDKeyLinkPreviewMode];
+        NSInteger migratedMode = [legacyMode respondsToSelector:@selector(integerValue)]
+            ? [legacyMode integerValue]
+            : ((![legacyToggle respondsToSelector:@selector(boolValue)] || [legacyToggle boolValue])
+                ? ApolloLinkPreviewModeFull
+                : ApolloLinkPreviewModeOff);
+        if (migratedMode < ApolloLinkPreviewModeOff || migratedMode > ApolloLinkPreviewModeFull) {
+            migratedMode = ApolloLinkPreviewModeFull;
+        }
+        if (![persistentDomain objectForKey:UDKeyLinkPreviewBodyMode]) {
+            [standardDefaults setInteger:migratedMode forKey:UDKeyLinkPreviewBodyMode];
+        }
+        if (![persistentDomain objectForKey:UDKeyLinkPreviewCommentsMode]) {
+            [standardDefaults setInteger:migratedMode forKey:UDKeyLinkPreviewCommentsMode];
+        }
     }
 
     sRedditClientId = (NSString *)[[[NSUserDefaults standardUserDefaults] objectForKey:UDKeyRedditClientId] ?: @"" copy];
@@ -929,12 +941,17 @@ static void initializeRandomSources() {
     sUnmuteCommentsVideos = [[NSUserDefaults standardUserDefaults] integerForKey:UDKeyUnmuteCommentsVideos];
     sProxyImgurDDG = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyProxyImgurDDG];
     sEnableInlineImages = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyEnableInlineImages];
-    sLinkPreviewMode = [[NSUserDefaults standardUserDefaults] integerForKey:UDKeyLinkPreviewMode];
-    if (sLinkPreviewMode < ApolloLinkPreviewModeOff || sLinkPreviewMode > ApolloLinkPreviewModeFull) {
-        sLinkPreviewMode = ApolloLinkPreviewModeFull;
-        [standardDefaults setInteger:sLinkPreviewMode forKey:UDKeyLinkPreviewMode];
+    sLinkPreviewBodyMode = [[NSUserDefaults standardUserDefaults] integerForKey:UDKeyLinkPreviewBodyMode];
+    if (sLinkPreviewBodyMode < ApolloLinkPreviewModeOff || sLinkPreviewBodyMode > ApolloLinkPreviewModeFull) {
+        sLinkPreviewBodyMode = ApolloLinkPreviewModeFull;
+        [standardDefaults setInteger:sLinkPreviewBodyMode forKey:UDKeyLinkPreviewBodyMode];
     }
-    ApolloLog(@"[LinkPreviews] settings loaded mode=%ld", (long)sLinkPreviewMode);
+    sLinkPreviewCommentsMode = [[NSUserDefaults standardUserDefaults] integerForKey:UDKeyLinkPreviewCommentsMode];
+    if (sLinkPreviewCommentsMode < ApolloLinkPreviewModeOff || sLinkPreviewCommentsMode > ApolloLinkPreviewModeFull) {
+        sLinkPreviewCommentsMode = ApolloLinkPreviewModeFull;
+        [standardDefaults setInteger:sLinkPreviewCommentsMode forKey:UDKeyLinkPreviewCommentsMode];
+    }
+    ApolloLog(@"[LinkPreviews] settings loaded bodyMode=%ld commentsMode=%ld", (long)sLinkPreviewBodyMode, (long)sLinkPreviewCommentsMode);
     sImageUploadProvider = [[NSUserDefaults standardUserDefaults] integerForKey:UDKeyImageUploadProvider];
     sShowUserAvatars = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars];
     sUseProfileAvatarTabIcon = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyUseProfileAvatarTabIcon];

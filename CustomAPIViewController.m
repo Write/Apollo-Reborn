@@ -317,8 +317,8 @@ typedef NS_ENUM(NSInteger, Tag) {
     [self presentViewController:sheet animated:YES completion:nil];
 }
 
-- (NSString *)linkPreviewModeText {
-    switch (sLinkPreviewMode) {
+- (NSString *)linkPreviewModeTextForMode:(NSInteger)mode {
+    switch (mode) {
         case ApolloLinkPreviewModeOff:     return @"Off";
         case ApolloLinkPreviewModeCompact: return @"Compact";
         case ApolloLinkPreviewModeFull:
@@ -326,33 +326,42 @@ typedef NS_ENUM(NSInteger, Tag) {
     }
 }
 
-- (void)setLinkPreviewMode:(NSInteger)mode {
-    sLinkPreviewMode = mode;
-    [[NSUserDefaults standardUserDefaults] setInteger:sLinkPreviewMode forKey:UDKeyLinkPreviewMode];
+- (void)setLinkPreviewMode:(NSInteger)mode body:(BOOL)body {
+    NSInteger row = body ? 5 : 6;
+    NSString *key = body ? UDKeyLinkPreviewBodyMode : UDKeyLinkPreviewCommentsMode;
+    if (body) {
+        sLinkPreviewBodyMode = mode;
+    } else {
+        sLinkPreviewCommentsMode = mode;
+    }
+    [[NSUserDefaults standardUserDefaults] setInteger:mode forKey:key];
 
-    NSIndexPath *indexPath = [NSIndexPath indexPathForRow:5 inSection:SectionMedia];
+    NSIndexPath *indexPath = [NSIndexPath indexPathForRow:row inSection:SectionMedia];
     if ([[self.tableView indexPathsForVisibleRows] containsObject:indexPath]) {
         [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
     }
 }
 
-- (void)presentLinkPreviewModeSheetFromSourceView:(UIView *)sourceView {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Rich Link Previews"
-                                                                   message:@"Choose how rich link preview cards appear in comments and post bodies."
+- (void)presentLinkPreviewModeSheetFromSourceView:(UIView *)sourceView body:(BOOL)body {
+    NSInteger currentMode = body ? sLinkPreviewBodyMode : sLinkPreviewCommentsMode;
+    NSString *title = body ? @"Body Link Previews" : @"Comment Link Previews";
+    NSString *message = body ? @"Choose how rich link preview cards appear in feeds and post bodies." : @"Choose how rich link preview cards appear in comments.";
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:title
+                                                                   message:message
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
-    NSString *fullTitle = (sLinkPreviewMode == ApolloLinkPreviewModeFull) ? @"Full (Current)" : @"Full";
-    NSString *compactTitle = (sLinkPreviewMode == ApolloLinkPreviewModeCompact) ? @"Compact (Current)" : @"Compact";
-    NSString *offTitle = (sLinkPreviewMode == ApolloLinkPreviewModeOff) ? @"Off (Current)" : @"Off";
+    NSString *fullTitle = (currentMode == ApolloLinkPreviewModeFull) ? @"Full (Current)" : @"Full";
+    NSString *compactTitle = (currentMode == ApolloLinkPreviewModeCompact) ? @"Compact (Current)" : @"Compact";
+    NSString *offTitle = (currentMode == ApolloLinkPreviewModeOff) ? @"Off (Current)" : @"Off";
 
     [sheet addAction:[UIAlertAction actionWithTitle:fullTitle style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
-        [self setLinkPreviewMode:ApolloLinkPreviewModeFull];
+        [self setLinkPreviewMode:ApolloLinkPreviewModeFull body:body];
     }]];
     [sheet addAction:[UIAlertAction actionWithTitle:compactTitle style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
-        [self setLinkPreviewMode:ApolloLinkPreviewModeCompact];
+        [self setLinkPreviewMode:ApolloLinkPreviewModeCompact body:body];
     }]];
     [sheet addAction:[UIAlertAction actionWithTitle:offTitle style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
-        [self setLinkPreviewMode:ApolloLinkPreviewModeOff];
+        [self setLinkPreviewMode:ApolloLinkPreviewModeOff body:body];
     }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
 
@@ -396,7 +405,7 @@ typedef NS_ENUM(NSInteger, Tag) {
         case SectionBackupRestore: return 2;
         case SectionAPIKeys: return 6; // 4 text fields + Can't sign in? + Instructions
         case SectionGeneral: return 8;
-        case SectionMedia: return [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars] ? 10 : 9;
+        case SectionMedia: return [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars] ? 11 : 10;
         case SectionSubreddits: return 5;
         case SectionAbout: return 4; // GitHub + Thanks To + Export Logs + Version
         default: return 0;
@@ -756,28 +765,40 @@ typedef NS_ENUM(NSInteger, Tag) {
                                                on:[[NSUserDefaults standardUserDefaults] boolForKey:UDKeyEnableInlineImages]
                                            action:@selector(inlineImagesSwitchToggled:)];
         case 5: {
-            UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell_Media_LinkPreviewMode"];
+            UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell_Media_LinkPreviewBodyMode"];
             if (!cell) {
-                cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"Cell_Media_LinkPreviewMode"];
+                cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"Cell_Media_LinkPreviewBodyMode"];
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
                 cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             }
-            cell.textLabel.text = @"Rich Link Previews";
-            cell.detailTextLabel.text = [self linkPreviewModeText];
+            cell.textLabel.text = @"Rich Link Previews - Body";
+            cell.detailTextLabel.text = [self linkPreviewModeTextForMode:sLinkPreviewBodyMode];
             cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
             return cell;
         }
-        case 6:
+        case 6: {
+            UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell_Media_LinkPreviewCommentsMode"];
+            if (!cell) {
+                cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"Cell_Media_LinkPreviewCommentsMode"];
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+            }
+            cell.textLabel.text = @"Rich Link Previews - Comments";
+            cell.detailTextLabel.text = [self linkPreviewModeTextForMode:sLinkPreviewCommentsMode];
+            cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+            return cell;
+        }
+        case 7:
             return [self switchCellWithIdentifier:@"Cell_Media_UserAvatars"
                                             label:@"Show User Profile Pictures"
                                                on:[[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars]
                                            action:@selector(userAvatarsSwitchToggled:)];
-        case 7:
+        case 8:
             return [self switchCellWithIdentifier:@"Cell_Media_ProfileTabAvatar"
                                             label:@"Profile Picture Tab Icon"
                                                on:[[NSUserDefaults standardUserDefaults] boolForKey:UDKeyUseProfileAvatarTabIcon]
                                            action:@selector(profileTabAvatarSwitchToggled:)];
-        case 8: {
+        case 9: {
             BOOL avatarsOn = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars];
             if (avatarsOn) {
                 UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell_Media_ClearAvatarCache"];
@@ -798,7 +819,7 @@ typedef NS_ENUM(NSInteger, Tag) {
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             return cell;
         }
-        case 9: {
+        case 10: {
             UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell_Media_ClearLinkPreviewCache"];
             if (!cell) {
                 cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"Cell_Media_ClearLinkPreviewCache"];
@@ -1046,10 +1067,12 @@ typedef NS_ENUM(NSInteger, Tag) {
         } else if (indexPath.row == 2) {
             [self presentImageUploadProviderSheetFromSourceView:cell];
         } else if (indexPath.row == 5) {
-            [self presentLinkPreviewModeSheetFromSourceView:cell];
-        } else if (indexPath.row == 8 && avatarsOn) {
+            [self presentLinkPreviewModeSheetFromSourceView:cell body:YES];
+        } else if (indexPath.row == 6) {
+            [self presentLinkPreviewModeSheetFromSourceView:cell body:NO];
+        } else if (indexPath.row == 9 && avatarsOn) {
             [self promptClearProfilePictureCacheFromSourceView:cell];
-        } else if ((indexPath.row == 8 && !avatarsOn) || (indexPath.row == 9 && avatarsOn)) {
+        } else if ((indexPath.row == 9 && !avatarsOn) || (indexPath.row == 10 && avatarsOn)) {
             [self promptClearLinkPreviewCacheFromSourceView:cell];
         }
     }
@@ -1058,7 +1081,7 @@ typedef NS_ENUM(NSInteger, Tag) {
 - (BOOL)tableView:(UITableView *)tableView shouldHighlightRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.section == SectionBackupRestore) return YES;
     if (indexPath.section == SectionAPIKeys && (indexPath.row == 4 || indexPath.row == 5)) return YES;
-    if (indexPath.section == SectionMedia && (indexPath.row == 0 || indexPath.row == 1 || indexPath.row == 2 || indexPath.row == 5 || indexPath.row == 8 || indexPath.row == 9)) return YES;
+    if (indexPath.section == SectionMedia && (indexPath.row == 0 || indexPath.row == 1 || indexPath.row == 2 || indexPath.row == 5 || indexPath.row == 6 || indexPath.row == 9 || indexPath.row == 10)) return YES;
     if (indexPath.section == SectionAbout && (indexPath.row == 0 || indexPath.row == 1 || indexPath.row == 2)) return YES;
     return NO;
 }
@@ -1337,13 +1360,13 @@ typedef NS_ENUM(NSInteger, Tag) {
     [[NSUserDefaults standardUserDefaults] setBool:sShowUserAvatars forKey:UDKeyShowUserAvatars];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"ApolloUserAvatarsToggleChangedNotification" object:nil];
     if (sShowUserAvatars == wasOn) return;
-    NSArray<NSIndexPath *> *paths = @[[NSIndexPath indexPathForRow:8 inSection:SectionMedia]];
+    NSArray<NSIndexPath *> *paths = @[[NSIndexPath indexPathForRow:9 inSection:SectionMedia]];
     if (sShowUserAvatars) {
         [self.tableView insertRowsAtIndexPaths:paths withRowAnimation:UITableViewRowAnimationFade];
     } else {
         [self.tableView deleteRowsAtIndexPaths:paths withRowAnimation:UITableViewRowAnimationFade];
     }
-    [self.tableView reloadRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:(sShowUserAvatars ? 9 : 8) inSection:SectionMedia]]
+    [self.tableView reloadRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:(sShowUserAvatars ? 10 : 9) inSection:SectionMedia]]
                           withRowAnimation:UITableViewRowAnimationNone];
 }
 
