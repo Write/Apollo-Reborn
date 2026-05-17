@@ -887,6 +887,7 @@ static void initializeRandomSources() {
                                     UDKeyUnmuteCommentsVideos: @0,
                                     UDKeyProxyImgurDDG: @NO,
                                     UDKeyEnableInlineImages: @YES,
+                                    UDKeyEnableLinkPreviews: @YES,
                                     UDKeyImageUploadProvider: @(ImageUploadProviderImgur),
                                     UDKeyShowUserAvatars: @NO,
                                     UDKeyAutoHideTabBarShowOnIdle: @NO,
@@ -916,6 +917,8 @@ static void initializeRandomSources() {
     sUnmuteCommentsVideos = [[NSUserDefaults standardUserDefaults] integerForKey:UDKeyUnmuteCommentsVideos];
     sProxyImgurDDG = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyProxyImgurDDG];
     sEnableInlineImages = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyEnableInlineImages];
+    sEnableLinkPreviews = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyEnableLinkPreviews];
+    ApolloLog(@"[LinkPreviews] settings loaded toggle=%@", sEnableLinkPreviews ? @"YES" : @"NO");
     sImageUploadProvider = [[NSUserDefaults standardUserDefaults] integerForKey:UDKeyImageUploadProvider];
     sShowUserAvatars = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars];
     sAutoHideTabBarShowOnIdle = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyAutoHideTabBarShowOnIdle];

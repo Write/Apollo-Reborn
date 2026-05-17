@@ -2,6 +2,7 @@
 #import "ApolloCommon.h"
 #import "ApolloState.h"
 #import "ApolloUserProfileCache.h"
+#import "ApolloLinkPreviewCache.h"
 #import "UserDefaultConstants.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
@@ -247,7 +248,7 @@ typedef NS_ENUM(NSInteger, Tag) {
         case SectionBackupRestore: return 2;
         case SectionAPIKeys: return 6; // 4 text fields + Can't sign in? + Instructions
         case SectionGeneral: return 8;
-        case SectionMedia: return [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars] ? 7 : 6;
+        case SectionMedia: return [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars] ? 9 : 8;
         case SectionSubreddits: return 5;
         case SectionAbout: return 4; // GitHub + Thanks To + Export Logs + Version
         default: return 0;
@@ -604,16 +605,42 @@ typedef NS_ENUM(NSInteger, Tag) {
                                                on:[[NSUserDefaults standardUserDefaults] boolForKey:UDKeyEnableInlineImages]
                                            action:@selector(inlineImagesSwitchToggled:)];
         case 5:
+            return [self switchCellWithIdentifier:@"Cell_Media_LinkPreviews"
+                                            label:@"Rich Link Previews"
+                                               on:[[NSUserDefaults standardUserDefaults] boolForKey:UDKeyEnableLinkPreviews]
+                                           action:@selector(linkPreviewsSwitchToggled:)];
+        case 6:
             return [self switchCellWithIdentifier:@"Cell_Media_UserAvatars"
                                             label:@"Show User Profile Pictures"
                                                on:[[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars]
                                            action:@selector(userAvatarsSwitchToggled:)];
-        case 6: {
-            UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell_Media_ClearAvatarCache"];
-            if (!cell) {
-                cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"Cell_Media_ClearAvatarCache"];
+        case 7: {
+            BOOL avatarsOn = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars];
+            if (avatarsOn) {
+                UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell_Media_ClearAvatarCache"];
+                if (!cell) {
+                    cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"Cell_Media_ClearAvatarCache"];
+                }
+                cell.textLabel.text = @"Clear Profile Picture Cache";
+                cell.textLabel.textColor = self.view.tintColor;
+                cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+                return cell;
             }
-            cell.textLabel.text = @"Clear Profile Picture Cache";
+            UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell_Media_ClearLinkPreviewCache"];
+            if (!cell) {
+                cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"Cell_Media_ClearLinkPreviewCache"];
+            }
+            cell.textLabel.text = @"Clear Link Preview Cache";
+            cell.textLabel.textColor = self.view.tintColor;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+            return cell;
+        }
+        case 8: {
+            UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell_Media_ClearLinkPreviewCache"];
+            if (!cell) {
+                cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"Cell_Media_ClearLinkPreviewCache"];
+            }
+            cell.textLabel.text = @"Clear Link Preview Cache";
             cell.textLabel.textColor = self.view.tintColor;
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             return cell;
@@ -848,14 +875,17 @@ typedef NS_ENUM(NSInteger, Tag) {
         }
     } else if (indexPath.section == SectionMedia) {
         UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
+        BOOL avatarsOn = [[NSUserDefaults standardUserDefaults] boolForKey:UDKeyShowUserAvatars];
         if (indexPath.row == 0) {
             [self presentPreferredGIFFallbackFormatSheetFromSourceView:cell];
         } else if (indexPath.row == 1) {
             [self presentUnmuteCommentsVideosModeSheetFromSourceView:cell];
         } else if (indexPath.row == 2) {
             [self presentImageUploadProviderSheetFromSourceView:cell];
-        } else if (indexPath.row == 6) {
+        } else if (indexPath.row == 7 && avatarsOn) {
             [self promptClearProfilePictureCacheFromSourceView:cell];
+        } else if ((indexPath.row == 7 && !avatarsOn) || (indexPath.row == 8 && avatarsOn)) {
+            [self promptClearLinkPreviewCacheFromSourceView:cell];
         }
     }
 }
@@ -863,7 +893,7 @@ typedef NS_ENUM(NSInteger, Tag) {
 - (BOOL)tableView:(UITableView *)tableView shouldHighlightRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.section == SectionBackupRestore) return YES;
     if (indexPath.section == SectionAPIKeys && (indexPath.row == 4 || indexPath.row == 5)) return YES;
-    if (indexPath.section == SectionMedia && (indexPath.row == 0 || indexPath.row == 1 || indexPath.row == 2 || indexPath.row == 6)) return YES;
+    if (indexPath.section == SectionMedia && (indexPath.row == 0 || indexPath.row == 1 || indexPath.row == 2 || indexPath.row == 7 || indexPath.row == 8)) return YES;
     if (indexPath.section == SectionAbout && (indexPath.row == 0 || indexPath.row == 1 || indexPath.row == 2)) return YES;
     return NO;
 }
@@ -1138,12 +1168,14 @@ typedef NS_ENUM(NSInteger, Tag) {
     [[NSUserDefaults standardUserDefaults] setBool:sShowUserAvatars forKey:UDKeyShowUserAvatars];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"ApolloUserAvatarsToggleChangedNotification" object:nil];
     if (sShowUserAvatars == wasOn) return;
-    NSArray<NSIndexPath *> *paths = @[[NSIndexPath indexPathForRow:6 inSection:SectionMedia]];
+    NSArray<NSIndexPath *> *paths = @[[NSIndexPath indexPathForRow:7 inSection:SectionMedia]];
     if (sShowUserAvatars) {
         [self.tableView insertRowsAtIndexPaths:paths withRowAnimation:UITableViewRowAnimationFade];
     } else {
         [self.tableView deleteRowsAtIndexPaths:paths withRowAnimation:UITableViewRowAnimationFade];
     }
+    [self.tableView reloadRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:(sShowUserAvatars ? 8 : 7) inSection:SectionMedia]]
+                          withRowAnimation:UITableViewRowAnimationNone];
 }
 
 - (void)promptClearProfilePictureCacheFromSourceView:(UIView *)sourceView {
@@ -1162,6 +1194,22 @@ typedef NS_ENUM(NSInteger, Tag) {
 - (void)inlineImagesSwitchToggled:(UISwitch *)sender {
     sEnableInlineImages = sender.isOn;
     [[NSUserDefaults standardUserDefaults] setBool:sEnableInlineImages forKey:UDKeyEnableInlineImages];
+}
+
+- (void)promptClearLinkPreviewCacheFromSourceView:(__unused UIView *)sourceView {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Clear Link Preview Cache?"
+                                                                   message:@"Cached link preview titles, descriptions, and thumbnails will be removed."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Clear" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+        [[ApolloLinkPreviewCache sharedCache] flushCache];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)linkPreviewsSwitchToggled:(UISwitch *)sender {
+    sEnableLinkPreviews = sender.isOn;
+    [[NSUserDefaults standardUserDefaults] setBool:sEnableLinkPreviews forKey:UDKeyEnableLinkPreviews];
 }
 
 #pragma mark - Backup / Restore

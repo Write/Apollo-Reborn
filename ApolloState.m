@@ -21,6 +21,7 @@ BOOL sProxyImgurDDG = NO;
 BOOL sShowUserAvatars = NO;
 BOOL sAutoHideTabBarShowOnIdle = NO;
 BOOL sEnableInlineImages = NO;
+BOOL sEnableLinkPreviews = NO;
 NSInteger sImageUploadProvider = ImageUploadProviderImgur;
 
 NSString *sLatestRedditBearerToken = nil;
