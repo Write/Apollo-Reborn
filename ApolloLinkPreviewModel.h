@@ -9,6 +9,11 @@
 @property (nonatomic, strong) NSURL *imageURL;
 @property (nonatomic) CGSize imageSize;
 @property (nonatomic) BOOL imageIsFallbackIcon;
+@property (nonatomic, copy) NSString *previewKind;
+@property (nonatomic, copy) NSString *authorDisplayName;
+@property (nonatomic, copy) NSString *authorHandle;
+@property (nonatomic, copy) NSString *postText;
+@property (nonatomic, strong) NSURL *avatarURL;
 @property (nonatomic, strong) NSDate *fetchedAt;
 @property (nonatomic) BOOL noMetadata;
 

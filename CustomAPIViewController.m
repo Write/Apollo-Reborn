@@ -22,6 +22,10 @@ typedef NS_ENUM(NSInteger, SectionIndex) {
     SectionCount
 };
 
+static BOOL sLinkPreviewModeRefreshPending = NO;
+static NSString *sPendingLinkPreviewModeRefreshArea = nil;
+static NSInteger sPendingLinkPreviewModeRefreshMode = ApolloLinkPreviewModeFull;
+
 #pragma mark - Thanks To VC (forward decl)
 
 @interface ApolloThanksToViewController : UITableViewController
@@ -335,6 +339,15 @@ typedef NS_ENUM(NSInteger, Tag) {
         sLinkPreviewCommentsMode = mode;
     }
     [[NSUserDefaults standardUserDefaults] setInteger:mode forKey:key];
+    sLinkPreviewModeRefreshPending = YES;
+    sPendingLinkPreviewModeRefreshArea = body ? @"body" : @"comments";
+    sPendingLinkPreviewModeRefreshMode = mode;
+    [[NSNotificationCenter defaultCenter] postNotificationName:ApolloLinkPreviewModeDidChangeNotification
+                                                        object:nil
+                                                      userInfo:@{
+                                                          @"area": body ? @"body" : @"comments",
+                                                          @"mode": @(mode),
+                                                      }];
 
     NSIndexPath *indexPath = [NSIndexPath indexPathForRow:row inSection:SectionMedia];
     if ([[self.tableView indexPathsForVisibleRows] containsObject:indexPath]) {
@@ -387,6 +400,35 @@ typedef NS_ENUM(NSInteger, Tag) {
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self apollo_applyTheme];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+
+    if (!sLinkPreviewModeRefreshPending) return;
+    sLinkPreviewModeRefreshPending = NO;
+
+    NSString *areaName = [sPendingLinkPreviewModeRefreshArea copy] ?: @"unknown";
+    NSInteger mode = sPendingLinkPreviewModeRefreshMode;
+    NSDictionary *userInfo = @{
+        @"area": areaName,
+        @"mode": @(mode),
+        @"reason": @"settings-disappear",
+    };
+
+    // The feed/comment view is usually revealed right after this controller exits.
+    // Fire a short delayed refresh so off-screen cells get rebuilt when visible again.
+    ApolloLog(@"[LinkPreviews] settings-exit-mode-refresh area=%@ mode=%ld", areaName, (long)mode);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(350 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:ApolloLinkPreviewModeDidChangeNotification
+                                                            object:nil
+                                                          userInfo:userInfo];
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1000 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:ApolloLinkPreviewModeDidChangeNotification
+                                                            object:nil
+                                                          userInfo:userInfo];
+    });
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {

@@ -41,7 +41,6 @@ ApolloImprovedCustomApi_FILES = \
     ApolloLinkPreviewFetcher.m \
     ApolloInlineImages.xm \
     ApolloInlineLinkPreviews.xm \
-    ApolloInlineLinkPreviewURLHiding.xm \
     ApolloTweetBuddy.xm \
     CustomAPIViewController.m \
     TranslationSettingsViewController.m \

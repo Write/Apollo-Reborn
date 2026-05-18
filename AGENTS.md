@@ -12,9 +12,14 @@ git submodule update --init --recursive
 
 # Standard build
 make package
+
+# Build a local test IPA from the persistent Apollo base IPA
+./patch.sh ./Apollo-base.ipa --liquid-glass -o /tmp/Apollo-base-liquid-glass.ipa
+./build-ipa.sh --ipa /tmp/Apollo-base-liquid-glass.ipa --deb ./packages/<tweak>.deb -o ./packages/Apollo-Test.ipa
 ```
 
 The Makefile automatically generates `Version.h` from the `control` file and links FFmpegKit libraries.
+`THEOS` is available at `/Users/kurisu/theos`. Do not rely on Azule/Cyan living in `/tmp`; `build-ipa.sh` uses the repo-local `scripts/inject-deb-local.sh` first for this repo's already-injected `Apollo-base.ipa` flow, then falls back to `azule`/`cyan` only for truly stock IPAs.
 
 ## Project Structure
 

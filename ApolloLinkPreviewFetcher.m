@@ -101,6 +101,15 @@ static NSString *ApolloLinkPreviewCleanString(NSString *string) {
     clean = [clean stringByReplacingOccurrencesOfString:@"&nbsp;" withString:@" "];
     clean = [clean stringByReplacingOccurrencesOfString:@"&quot;" withString:@"\""];
     clean = [clean stringByReplacingOccurrencesOfString:@"&apos;" withString:@"'"];
+    clean = [clean stringByReplacingOccurrencesOfString:@"&lsquo;" withString:@"'"];
+    clean = [clean stringByReplacingOccurrencesOfString:@"&rsquo;" withString:@"'"];
+    clean = [clean stringByReplacingOccurrencesOfString:@"&sbquo;" withString:@"'"];
+    clean = [clean stringByReplacingOccurrencesOfString:@"&ldquo;" withString:@"\""];
+    clean = [clean stringByReplacingOccurrencesOfString:@"&rdquo;" withString:@"\""];
+    clean = [clean stringByReplacingOccurrencesOfString:@"&bdquo;" withString:@"\""];
+    clean = [clean stringByReplacingOccurrencesOfString:@"&ndash;" withString:@"-"];
+    clean = [clean stringByReplacingOccurrencesOfString:@"&mdash;" withString:@"-"];
+    clean = [clean stringByReplacingOccurrencesOfString:@"&hellip;" withString:@"..."];
     clean = [clean stringByReplacingOccurrencesOfString:@"&lt;" withString:@"<"];
     clean = [clean stringByReplacingOccurrencesOfString:@"&gt;" withString:@">"];
     // &amp; last so we don't double-decode embedded entities.
@@ -151,6 +160,10 @@ static BOOL ApolloLinkPreviewIsBlockedPage(NSString *title, NSString *html) {
         @"access denied",
         @"are you a robot",
         @"verifying you are human",
+        // Nature.com fronts most article pages with a Cloudflare interstitial
+        // whose <title> is literally "Client Challenge". Treat it as a wall so
+        // we never cache that as the preview title.
+        @"client challenge",
     ];
     NSString *lowerTitle = title.lowercaseString;
     for (NSString *needle in titleNeedles) {
@@ -232,6 +245,18 @@ static NSString *ApolloLinkPreviewDOIFromURL(NSURL *url) {
     NSString *doi = nil;
     if ([host isEqualToString:@"doi.org"] && parts.count > 0) {
         doi = [parts componentsJoinedByString:@"/"];
+    } else if (([host isEqualToString:@"nature.com"] || [host hasSuffix:@".nature.com"])
+               && parts.count >= 2
+               && [parts[0].lowercaseString isEqualToString:@"articles"]) {
+        // Nature articles always map to DOI prefix 10.1038/<article-id>, e.g.
+        // /articles/s41586-024-12345-6 -> 10.1038/s41586-024-12345-6 and
+        // /articles/nature12345 -> 10.1038/nature12345. The article-id token
+        // is the path component directly after "/articles/".
+        NSString *articleID = parts[1];
+        NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."];
+        if ([articleID rangeOfCharacterFromSet:[allowed invertedSet]].location == NSNotFound) {
+            doi = [@"10.1038/" stringByAppendingString:articleID];
+        }
     } else {
         NSUInteger doiIndex = NSNotFound;
         for (NSUInteger index = 0; index < parts.count; index++) {
@@ -376,6 +401,25 @@ static ApolloLinkPreview *ApolloLinkPreviewFallbackPreviewForURL(NSURL *url, NSS
     return preview;
 }
 
+static BOOL ApolloLinkPreviewIsWeakAcademicPreview(ApolloLinkPreview *preview, NSURL *url) {
+    if (ApolloLinkPreviewDOIFromURL(url).length == 0 || !preview) return NO;
+    NSString *lowerTitle = preview.title.lowercaseString ?: @"";
+    NSString *lowerDesc = preview.desc.lowercaseString ?: @"";
+    return [lowerTitle hasPrefix:@"doi "]
+        || [lowerTitle hasPrefix:@"10."]
+        || [lowerDesc containsString:@"text/html"]
+        || [lowerDesc containsString:@"charset="];
+}
+
+// Returns YES when an existing cache entry was captured behind a known
+// anti-bot wall (Cloudflare's "Client Challenge" etc.) and should be
+// discarded on the next requestPreview so we can refetch through Crossref or
+// the bot-wall fallback branch.
+static BOOL ApolloLinkPreviewIsCachedBotWall(ApolloLinkPreview *preview) {
+    if (!preview) return NO;
+    return ApolloLinkPreviewIsBlockedPage(preview.title, nil);
+}
+
 static NSURL *ApolloTheNumbersPosterURLFromHTML(NSString *html, NSURL *baseURL) {
     if (html.length == 0 || !ApolloLinkPreviewHostIs(baseURL, @"the-numbers.com")) return nil;
 
@@ -438,6 +482,40 @@ static NSString *ApolloYouTubeVideoIDFromURL(NSURL *url) {
     return nil;
 }
 
+static NSDictionary<NSString *, NSString *> *ApolloBlueskyPostPartsFromURL(NSURL *url) {
+    if (!ApolloLinkPreviewHostIs(url, @"bsky.app")) return nil;
+
+    NSArray<NSString *> *parts = [url.path componentsSeparatedByString:@"/"];
+    NSMutableArray<NSString *> *clean = [NSMutableArray array];
+    for (NSString *part in parts) {
+        NSString *decoded = part.stringByRemovingPercentEncoding ?: part;
+        if (decoded.length > 0) [clean addObject:decoded];
+    }
+
+    NSUInteger profileIndex = [clean indexOfObject:@"profile"];
+    NSUInteger postIndex = [clean indexOfObject:@"post"];
+    if (profileIndex == NSNotFound || postIndex == NSNotFound || profileIndex + 1 >= clean.count || postIndex + 1 >= clean.count) {
+        return nil;
+    }
+
+    NSString *actor = clean[profileIndex + 1];
+    NSString *rkey = clean[postIndex + 1];
+    if (actor.length == 0 || rkey.length == 0) return nil;
+    return @{@"actor": actor, @"rkey": rkey};
+}
+
+static NSString *ApolloBlueskyFirstTextLine(NSString *text) {
+    NSString *clean = ApolloLinkPreviewCleanString(text);
+    if (clean.length == 0) return nil;
+
+    NSArray<NSString *> *parts = [clean componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    for (NSString *part in parts) {
+        NSString *line = ApolloLinkPreviewCleanString(part);
+        if (line.length > 0) return ApolloLinkPreviewTruncatedString(line, 90);
+    }
+    return ApolloLinkPreviewTruncatedString(clean, 90);
+}
+
 static NSString *ApolloWikipediaPageTitleFromURL(NSURL *url) {
     if (!ApolloLinkPreviewHostIs(url, @"wikipedia.org")) return nil;
     NSArray<NSString *> *parts = [url.path componentsSeparatedByString:@"/"];
@@ -456,6 +534,10 @@ static NSMutableURLRequest *ApolloLinkPreviewRequest(NSURL *url, NSTimeInterval 
     return request;
 }
 
+static NSString *ApolloLinkPreviewBrowserUserAgent(void) {
+    return @"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+}
+
 @interface ApolloLinkPreviewFetcher ()
 + (void)fetchPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion;
 + (void)finishURL:(NSURL *)url preview:(ApolloLinkPreview *)preview;
@@ -464,8 +546,11 @@ static NSMutableURLRequest *ApolloLinkPreviewRequest(NSURL *url, NSTimeInterval 
 + (void)fetchWikipediaPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion;
 + (void)fetchRedditPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion;
 + (void)fetchGitHubPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion;
++ (void)fetchBlueskyPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion;
++ (NSString *)crossrefSummaryFromMessage:(NSDictionary *)message;
 + (void)fetchCrossrefPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion;
 + (void)fetchHTMLPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion;
++ (void)fetchHTMLPreviewForURL:(NSURL *)url allowRange:(BOOL)allowRange browserFallback:(BOOL)browserFallback completion:(ApolloLinkPreviewCompletion)completion;
 @end
 
 @implementation ApolloLinkPreviewFetcher
@@ -481,8 +566,19 @@ static NSMutableURLRequest *ApolloLinkPreviewRequest(NSURL *url, NSTimeInterval 
     if ([logHost hasPrefix:@"www."]) logHost = [logHost substringFromIndex:4];
     ApolloLog(@"[LinkPreviews] requestPreview host=%@ cached=%@", logHost, cached ? @"YES" : @"NO");
     if (cached) {
-        if (completion) completion(cached);
-        return;
+        BOOL botWall = ApolloLinkPreviewIsCachedBotWall(cached);
+        BOOL weakAcademic = ApolloLinkPreviewIsWeakAcademicPreview(cached, url);
+        BOOL weakGeneric = cached.imageIsFallbackIcon
+            && cached.desc.length == 0
+            && [cached.title isEqualToString:ApolloLinkPreviewTitleFromURL(url)];
+        BOOL staleBluesky = ApolloBlueskyPostPartsFromURL(url)
+            && (![cached.previewKind isEqualToString:@"bluesky"] || cached.postText.length == 0);
+        if (!botWall && !weakAcademic && !weakGeneric && !staleBluesky) {
+            if (completion) completion(cached);
+            return;
+        }
+        ApolloLog(@"[LinkPreviews] refetching cached preview host=%@ reason=%@",
+                  logHost, botWall ? @"bot-wall" : (weakAcademic ? @"weak-academic" : (weakGeneric ? @"weak-generic" : @"stale-bluesky")));
     }
 
     NSString *key = url.absoluteString ?: @"";
@@ -521,7 +617,17 @@ static NSMutableURLRequest *ApolloLinkPreviewRequest(NSURL *url, NSTimeInterval 
         [self fetchRedditPreviewForURL:url completion:completion];
     } else if (ApolloLinkPreviewHostIs(url, @"github.com")) {
         [self fetchGitHubPreviewForURL:url completion:completion];
-    } else if (ApolloLinkPreviewHostIs(url, @"doi.org")) {
+    } else if (ApolloBlueskyPostPartsFromURL(url)) {
+        [self fetchBlueskyPreviewForURL:url completion:^(ApolloLinkPreview *preview) {
+            if (preview) completion(preview);
+            else [self fetchHTMLPreviewForURL:url completion:completion];
+        }];
+    } else if (ApolloLinkPreviewHostIs(url, @"doi.org")
+               || (ApolloLinkPreviewHostIs(url, @"nature.com") && ApolloLinkPreviewDOIFromURL(url).length > 0)) {
+        // For doi.org and Nature article URLs, jump straight to Crossref:
+        // both either redirect to a Cloudflare wall (Nature's "Client
+        // Challenge") or only expose the DOI in their meta tags, so the
+        // HTML fetch round-trip adds nothing useful here.
         [self fetchCrossrefPreviewForURL:url completion:^(ApolloLinkPreview *preview) {
             if (preview) completion(preview);
             else [self fetchHTMLPreviewForURL:url completion:completion];
@@ -772,6 +878,140 @@ static NSMutableURLRequest *ApolloLinkPreviewRequest(NSURL *url, NSTimeInterval 
     }] resume];
 }
 
++ (void)fetchBlueskyPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion {
+    NSDictionary<NSString *, NSString *> *parts = ApolloBlueskyPostPartsFromURL(url);
+    NSString *actor = parts[@"actor"];
+    NSString *rkey = parts[@"rkey"];
+    if (actor.length == 0 || rkey.length == 0) {
+        completion(nil);
+        return;
+    }
+
+    void (^fetchPostWithDID)(NSString *) = ^(NSString *did) {
+        if (did.length == 0) {
+            completion(nil);
+            return;
+        }
+
+        NSString *atURI = [NSString stringWithFormat:@"at://%@/app.bsky.feed.post/%@", did, rkey];
+        NSURLComponents *components = [NSURLComponents componentsWithString:@"https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread"];
+        components.queryItems = @[
+            [NSURLQueryItem queryItemWithName:@"uri" value:atURI],
+            [NSURLQueryItem queryItemWithName:@"depth" value:@"0"],
+            [NSURLQueryItem queryItemWithName:@"parentHeight" value:@"0"],
+        ];
+
+        NSMutableURLRequest *request = ApolloLinkPreviewRequest(components.URL, 10.0);
+        [request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+        [[[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
+            if (error || !data || httpResponse.statusCode < 200 || httpResponse.statusCode >= 300) {
+                ApolloLog(@"[LinkPreviews] Bluesky post fetch failed host=%@ status=%ld err=%@",
+                          ApolloLinkPreviewHost(url), (long)httpResponse.statusCode, error.localizedDescription);
+                completion(nil);
+                return;
+            }
+
+            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            NSDictionary *thread = [json[@"thread"] isKindOfClass:[NSDictionary class]] ? json[@"thread"] : nil;
+            NSDictionary *post = [thread[@"post"] isKindOfClass:[NSDictionary class]] ? thread[@"post"] : nil;
+            if (![post isKindOfClass:[NSDictionary class]]) {
+                completion(nil);
+                return;
+            }
+
+            NSDictionary *author = [post[@"author"] isKindOfClass:[NSDictionary class]] ? post[@"author"] : nil;
+            NSDictionary *record = [post[@"record"] isKindOfClass:[NSDictionary class]] ? post[@"record"] : nil;
+            NSDictionary *embed = [post[@"embed"] isKindOfClass:[NSDictionary class]] ? post[@"embed"] : nil;
+
+            NSString *displayName = ApolloLinkPreviewCleanString(author[@"displayName"]);
+            NSString *handle = ApolloLinkPreviewCleanString(author[@"handle"]);
+            NSString *text = ApolloLinkPreviewCleanString(record[@"text"]);
+            NSString *title = nil;
+            if (displayName.length > 0 && handle.length > 0) {
+                title = [NSString stringWithFormat:@"%@ (@%@)", displayName, handle];
+            } else {
+                title = displayName ?: handle ?: ApolloBlueskyFirstTextLine(text) ?: @"Bluesky";
+            }
+
+            ApolloLinkPreview *preview = [ApolloLinkPreview new];
+            preview.siteName = @"Bluesky";
+            preview.title = title;
+            preview.desc = ApolloLinkPreviewTruncatedString(text, 300);
+            preview.previewKind = @"bluesky";
+            preview.authorDisplayName = displayName;
+            preview.authorHandle = handle;
+            preview.postText = text;
+            preview.avatarURL = ApolloLinkPreviewURLFromString(author[@"avatar"], url);
+            preview.fetchedAt = [NSDate date];
+
+            BOOL avatarOnlyImage = NO;
+            NSArray *images = [embed[@"images"] isKindOfClass:[NSArray class]] ? embed[@"images"] : nil;
+            NSDictionary *firstImage = images.count > 0 && [images.firstObject isKindOfClass:[NSDictionary class]] ? images.firstObject : nil;
+            NSString *imageString = nil;
+            if (firstImage) {
+                imageString = firstImage[@"thumb"] ?: firstImage[@"fullsize"];
+                NSDictionary *aspectRatio = [firstImage[@"aspectRatio"] isKindOfClass:[NSDictionary class]] ? firstImage[@"aspectRatio"] : nil;
+                if ([aspectRatio[@"width"] respondsToSelector:@selector(doubleValue)] && [aspectRatio[@"height"] respondsToSelector:@selector(doubleValue)]) {
+                    preview.imageSize = CGSizeMake([aspectRatio[@"width"] doubleValue], [aspectRatio[@"height"] doubleValue]);
+                }
+            }
+
+            NSDictionary *external = [embed[@"external"] isKindOfClass:[NSDictionary class]] ? embed[@"external"] : nil;
+            if (imageString.length == 0) {
+                imageString = external[@"thumb"];
+            }
+            if (preview.desc.length == 0) {
+                preview.desc = ApolloLinkPreviewTruncatedString(external[@"description"] ?: external[@"title"], 220);
+            }
+            if (imageString.length == 0) {
+                imageString = author[@"avatar"];
+                avatarOnlyImage = imageString.length > 0;
+                if (avatarOnlyImage) preview.imageSize = CGSizeMake(128.0, 128.0);
+            }
+
+            preview.imageURL = ApolloLinkPreviewURLFromString(imageString, url);
+            ApolloLog(@"[LinkPreviews] Bluesky preview fetched handle=%@ image=%@", handle ?: actor, preview.imageURL.absoluteString.length > 0 ? @"YES" : @"NO");
+
+            if (avatarOnlyImage && preview.imageURL.absoluteString.length > 0) {
+                [self imageURLIsUsable:preview.imageURL completion:^(BOOL usable) {
+                    if (!usable) {
+                        preview.imageURL = nil;
+                        preview.imageSize = CGSizeZero;
+                    }
+                    completion(preview);
+                }];
+                return;
+            }
+
+            completion(preview);
+        }] resume];
+    };
+
+    if ([actor hasPrefix:@"did:"]) {
+        fetchPostWithDID(actor);
+        return;
+    }
+
+    NSURLComponents *components = [NSURLComponents componentsWithString:@"https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle"];
+    components.queryItems = @[[NSURLQueryItem queryItemWithName:@"handle" value:actor]];
+    NSMutableURLRequest *request = ApolloLinkPreviewRequest(components.URL, 10.0);
+    [request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+    [[[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
+        if (error || !data || httpResponse.statusCode < 200 || httpResponse.statusCode >= 300) {
+            ApolloLog(@"[LinkPreviews] Bluesky handle resolve failed actor=%@ status=%ld err=%@",
+                      actor, (long)httpResponse.statusCode, error.localizedDescription);
+            completion(nil);
+            return;
+        }
+
+        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        NSString *did = [json[@"did"] isKindOfClass:[NSString class]] ? json[@"did"] : nil;
+        fetchPostWithDID(did);
+    }] resume];
+}
+
 + (NSString *)crossrefSummaryFromMessage:(NSDictionary *)message {
     NSString *publisher = ApolloLinkPreviewFirstString(message[@"publisher"]);
     NSString *container = ApolloLinkPreviewFirstString(message[@"container-title"]);
@@ -790,7 +1030,7 @@ static NSMutableURLRequest *ApolloLinkPreviewRequest(NSURL *url, NSTimeInterval 
     if (container.length > 0) [summaryParts addObject:container];
     if (publisher.length > 0 && ![publisher isEqualToString:container]) [summaryParts addObject:publisher];
     if (dateString.length > 0) [summaryParts addObject:dateString];
-    return summaryParts.count > 0 ? [summaryParts componentsJoinedByString:@" · "] : nil;
+    return summaryParts.count > 0 ? [summaryParts componentsJoinedByString:@" - "] : nil;
 }
 
 + (void)fetchCrossrefPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion {
@@ -887,8 +1127,18 @@ static NSMutableURLRequest *ApolloLinkPreviewRequest(NSURL *url, NSTimeInterval 
 }
 
 + (void)fetchHTMLPreviewForURL:(NSURL *)url completion:(ApolloLinkPreviewCompletion)completion {
-    NSMutableURLRequest *request = ApolloLinkPreviewRequest(url, 12.0);
-    [request setValue:@"bytes=0-65535" forHTTPHeaderField:@"Range"];
+    [self fetchHTMLPreviewForURL:url allowRange:YES browserFallback:NO completion:completion];
+}
+
++ (void)fetchHTMLPreviewForURL:(NSURL *)url allowRange:(BOOL)allowRange browserFallback:(BOOL)browserFallback completion:(ApolloLinkPreviewCompletion)completion {
+    NSMutableURLRequest *request = ApolloLinkPreviewRequest(url, browserFallback ? 18.0 : 12.0);
+    if (allowRange) {
+        [request setValue:@"bytes=0-65535" forHTTPHeaderField:@"Range"];
+    }
+    if (browserFallback) {
+        [request setValue:ApolloLinkPreviewBrowserUserAgent() forHTTPHeaderField:@"User-Agent"];
+        [request setValue:@"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" forHTTPHeaderField:@"Accept"];
+    }
 
     [[[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
@@ -897,12 +1147,17 @@ static NSMutableURLRequest *ApolloLinkPreviewRequest(NSURL *url, NSTimeInterval 
             ApolloLog(@"[LinkPreviews] HTML fetch failed %@ status=%ld type=%@ bytes=%lu err=%@",
                       url.absoluteString, (long)httpResponse.statusCode, contentType ?: @"",
                       (unsigned long)data.length, error.localizedDescription);
+            if (!browserFallback && (error || httpResponse.statusCode == 0 || data.length == 0)) {
+                ApolloLog(@"[LinkPreviews] HTML retrying full browser fetch host=%@", ApolloLinkPreviewHost(url));
+                [self fetchHTMLPreviewForURL:url allowRange:NO browserFallback:YES completion:completion];
+                return;
+            }
             if (ApolloLinkPreviewDOIFromURL(url).length > 0) {
                 [self fetchCrossrefPreviewForURL:url completion:^(ApolloLinkPreview *preview) {
                     completion(preview ?: ApolloLinkPreviewFallbackPreviewForURL(url, nil));
                 }];
             } else {
-                completion(ApolloLinkPreviewFallbackPreviewForURL(url, nil));
+                completion(ApolloLinkPreviewFallbackPreviewForURL(url, contentType.length > 0 ? contentType : nil));
             }
             return;
         }
@@ -975,7 +1230,7 @@ static NSMutableURLRequest *ApolloLinkPreviewRequest(NSURL *url, NSTimeInterval 
         }
 
         BOOL weakAcademicMetadata = ApolloLinkPreviewDOIFromURL(url).length > 0
-            && (preview.desc.length == 0 || [preview.title.lowercaseString hasPrefix:@"doi "]);
+            && (preview.desc.length == 0 || [preview.title.lowercaseString hasPrefix:@"doi "] || [preview.title.lowercaseString hasPrefix:@"10."]);
         if (weakAcademicMetadata) {
             [self fetchCrossrefPreviewForURL:url completion:^(ApolloLinkPreview *crossrefPreview) {
                 completion(crossrefPreview ?: preview);

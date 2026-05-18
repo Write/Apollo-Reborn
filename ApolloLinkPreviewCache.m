@@ -49,19 +49,7 @@ static const NSTimeInterval ApolloLinkPreviewYouTubeTTL = 30.0 * 24.0 * 60.0 * 6
             BOOL noMetadata = [rawFlag respondsToSelector:@selector(boolValue)] && [rawFlag boolValue];
             NSString *imageURL = [entry[@"imageURL"] isKindOfClass:[NSString class]] ? [entry[@"imageURL"] lowercaseString] : nil;
             BOOL legacyFallbackIcon = [imageURL containsString:@"google.com/s2/favicons"];
-            NSString *siteName = [entry[@"siteName"] isKindOfClass:[NSString class]] ? [entry[@"siteName"] lowercaseString] : nil;
-            NSString *title = [entry[@"title"] isKindOfClass:[NSString class]] ? [entry[@"title"] lowercaseString] : nil;
-            NSString *desc = [entry[@"desc"] isKindOfClass:[NSString class]] ? [entry[@"desc"] lowercaseString] : nil;
-            BOOL contentTypeDescription = [desc containsString:@"text/html"] || [desc containsString:@"charset="];
-            BOOL rawDOITitle = [title hasPrefix:@"10."] || [title hasPrefix:@"doi "];
-            BOOL academicFallback = legacyFallbackIcon
-                && (contentTypeDescription
-                    || rawDOITitle
-                    || [siteName containsString:@"doi.org"]
-                    || [siteName containsString:@"sagepub"]
-                    || [siteName containsString:@"nature.com"]
-                    || [siteName containsString:@"springer"]);
-            if (noMetadata || legacyFallbackIcon || academicFallback) [keysToPurge addObject:key];
+            if (noMetadata || legacyFallbackIcon) [keysToPurge addObject:key];
         }];
         if (keysToPurge.count > 0) {
             [_entries removeObjectsForKeys:keysToPurge];

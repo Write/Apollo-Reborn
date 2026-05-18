@@ -20,7 +20,6 @@
 @end
 
 static NSString * const ApolloLinkPreviewDidCacheNotification = @"ApolloLinkPreviewDidCacheNotification";
-static NSString * const ApolloLinkPreviewDidActivateNotification = @"ApolloLinkPreviewDidActivateNotification";
 
 static const void *kApolloLPURLHidingOriginalTextKey = &kApolloLPURLHidingOriginalTextKey;
 static const void *kApolloLPURLHidingReentrancyKey = &kApolloLPURLHidingReentrancyKey;
@@ -48,15 +47,6 @@ static dispatch_queue_t ApolloLPURLHidingQueue(void) {
     return queue;
 }
 
-static NSMutableSet<NSString *> *ApolloLPActivePreviewURLStrings(void) {
-    static NSMutableSet<NSString *> *urls;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        urls = [NSMutableSet set];
-    });
-    return urls;
-}
-
 static BOOL ApolloLPURLIsHTTP(NSURL *url) {
     NSString *scheme = url.scheme.lowercaseString ?: @"";
     return [scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"];
@@ -75,26 +65,6 @@ static BOOL ApolloLPURLsMatch(NSURL *a, NSURL *b) {
     NSString *aString = a.absoluteString.lowercaseString ?: @"";
     NSString *bString = b.absoluteString.lowercaseString ?: @"";
     return aString.length > 0 && [aString isEqualToString:bString];
-}
-
-static NSString *ApolloLPURLKey(NSURL *url) {
-    return url.absoluteString.lowercaseString ?: @"";
-}
-
-static void ApolloLPRegisterActivePreviewURL(NSURL *url) {
-    NSString *key = ApolloLPURLKey(url);
-    if (key.length == 0) return;
-    @synchronized (ApolloLPActivePreviewURLStrings()) {
-        [ApolloLPActivePreviewURLStrings() addObject:key];
-    }
-}
-
-static BOOL ApolloLPPreviewIsActiveForURL(NSURL *url) {
-    NSString *key = ApolloLPURLKey(url);
-    if (key.length == 0) return NO;
-    @synchronized (ApolloLPActivePreviewURLStrings()) {
-        return [ApolloLPActivePreviewURLStrings() containsObject:key];
-    }
 }
 
 static NSURL *ApolloLPBareHTTPURLFromText(NSString *text) {
@@ -194,9 +164,7 @@ static NSAttributedString *ApolloLPAttributedTextByHidingStandalonePreviewURLs(N
         NSURL *url = ApolloLPURLFromStandaloneParagraph(attributedText, substringRange);
         if (!url) return;
         [candidateURLs addObject:url];
-        if ([[ApolloLinkPreviewCache sharedCache] cachedPreviewIsRichForURL:url]
-            || ApolloLPPreviewIsActiveForURL(url)
-            || ApolloLPURLHidingEnabled()) {
+        if ([[ApolloLinkPreviewCache sharedCache] cachedPreviewIsRichForURL:url]) {
             [rangesToRemove addObject:[NSValue valueWithRange:enclosingRange]];
         }
     }];
@@ -226,7 +194,7 @@ static void ApolloLPRegisterURLHidingTextNode(id textNode, NSAttributedString *o
 
 static void ApolloLPLogURLHide(NSUInteger hiddenCount, id textNode) {
     if (hiddenCount == 0) return;
-    ApolloLog(@"[LinkPreviews] V13 hid %lu standalone preview URL paragraph(s) node=%@",
+    ApolloLog(@"[LinkPreviews] V12 hid %lu standalone rich-preview URL paragraph(s) node=%@",
               (unsigned long)hiddenCount,
               NSStringFromClass([textNode class]));
 }
@@ -290,16 +258,6 @@ static void ApolloLPInstallURLHidingObserver(void) {
             ApolloLPReapplyURLHidingForCachedURL(url);
         }
     }];
-    [[NSNotificationCenter defaultCenter] addObserverForName:ApolloLinkPreviewDidActivateNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification *notification) {
-        NSURL *url = notification.userInfo[@"url"];
-        if ([url isKindOfClass:[NSURL class]]) {
-            ApolloLPRegisterActivePreviewURL(url);
-            ApolloLPReapplyURLHidingForCachedURL(url);
-        }
-    }];
 }
 
 %hook ASTextNode
@@ -353,5 +311,4 @@ static void ApolloLPInstallURLHidingObserver(void) {
 %ctor {
     ApolloLPInstallURLHidingObserver();
     ApolloLog(@"[LinkPreviews] V12 URL hiding helper active");
-    ApolloLog(@"[LinkPreviews] V13 early URL hiding active");
 }
