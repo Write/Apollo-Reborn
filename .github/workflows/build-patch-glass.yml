@@ -251,9 +251,9 @@ jobs:
           zip -6 -rq "NO-EXTENSIONS_GLASS_${OUTPUT_NAME}.ipa" "Payload" -x "*/.*"
       
       - name: Patch GLASS variants with patch.sh
-              env:
-                OUTPUT_NAME: ${{ steps.download-files.outputs.OUTPUT_NAME }}
-              run: |
+        env:
+          OUTPUT_NAME: ${{ steps.download-files.outputs.OUTPUT_NAME }}
+        run: |
                 chmod +x patch.sh
                 ./patch.sh "${OUTPUT_NAME}/GLASS_${OUTPUT_NAME}.ipa" --liquid-glass -o "${OUTPUT_NAME}/GLASS_${OUTPUT_NAME}.ipa"
                 ./patch.sh "NO-EXTENSIONS_${OUTPUT_NAME}/NO-EXTENSIONS_GLASS_${OUTPUT_NAME}.ipa" --liquid-glass -o "NO-EXTENSIONS_${OUTPUT_NAME}/NO-EXTENSIONS_GLASS_${OUTPUT_NAME}.ipa"
